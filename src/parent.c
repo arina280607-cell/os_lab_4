@@ -22,17 +22,72 @@ static void request_stop(int signo)
 
 static pid_t start_child(const char *program, const char *shared_path)
 {
-    pid_t pid = fork();
+    sigset_t stop_signals;
+    sigset_t previous_mask;
 
-    if (pid == -1) {
-        perror("parent: fork");
+    if (sigemptyset(&stop_signals) == -1 ||
+        sigaddset(&stop_signals, SIGINT) == -1 ||
+        sigaddset(&stop_signals, SIGTERM) == -1) {
+        perror("parent: prepare fork signal mask");
         return -1;
     }
 
+    /* The child must not handle termination with the parent's handler
+       during the interval between fork and exec. Keep it pending until
+       the child has restored default signal dispositions. */
+    if (sigprocmask(SIG_BLOCK, &stop_signals, &previous_mask) == -1) {
+        perror("parent: block stop signals before fork");
+        return -1;
+    }
+
+    pid_t pid = fork();
+    int fork_errno = errno;
+
     if (pid == 0) {
+        struct sigaction action = {0};
+        action.sa_handler = SIG_DFL;
+
+        if (sigemptyset(&action.sa_mask) == -1 ||
+            sigaction(SIGINT, &action, NULL) == -1 ||
+            sigaction(SIGTERM, &action, NULL) == -1) {
+            perror("child: restore default stop signals");
+            _exit(127);
+        }
+
+        if (sigprocmask(SIG_SETMASK, &previous_mask, NULL) == -1) {
+            perror("child: restore signal mask");
+            _exit(127);
+        }
+
         execl(program, program, shared_path, (char *)NULL);
         perror(program);
         _exit(127);
+    }
+
+    if (sigprocmask(SIG_SETMASK, &previous_mask, NULL) == -1) {
+        perror("parent: restore signal mask after fork");
+
+        /* A child might already exist even though restoring the mask failed. */
+        if (pid > 0) {
+            if (kill(pid, SIGKILL) == -1 && errno != ESRCH) {
+                perror("parent: stop child after signal-mask failure");
+            }
+            int status;
+            while (waitpid(pid, &status, 0) == -1) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                perror("parent: reap child after signal-mask failure");
+                break;
+            }
+        }
+        return -1;
+    }
+
+    if (pid == -1) {
+        errno = fork_errno;
+        perror("parent: fork");
+        return -1;
     }
 
     return pid;
