@@ -1,7 +1,9 @@
 #include "shared.h"
 #include "sync.h"
+#include "text.h"
 
 #include <fcntl.h>
+#include <locale.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -13,9 +15,12 @@ int main(int argc, char *argv[])
     int fd = -1;
     int result = EXIT_FAILURE;
     struct shared_block *block = NULL;
-
     if (argc != 2) {
         fprintf(stderr, "Usage: %s SHARED_FILE\n", argv[0]);
+        return EXIT_FAILURE;
+    }
+    if (setlocale(LC_CTYPE, "C.UTF-8") == NULL) {
+        fprintf(stderr, "child1: C.UTF-8 locale is unavailable\n");
         return EXIT_FAILURE;
     }
 
@@ -24,43 +29,43 @@ int main(int argc, char *argv[])
         perror("child1: open");
         goto cleanup;
     }
-
     if (shared_map(fd, &block) == -1) {
         perror("child1: shared_map");
         goto cleanup;
     }
 
-    if (sync_wait(SIGUSR1, parent_pid, 0) == -1) {
-        perror("child1: wait for permission");
-        goto cleanup;
-    }
+    for (;;) {
+        if (sync_wait(SIGUSR1, parent_pid, 0) == -1) {
+            perror("child1: wait for permission");
+            goto cleanup;
+        }
 
-    if (block->kind != MESSAGE_DATA || block->length > SHARED_CAPACITY) {
-        fprintf(stderr, "[%s] Invalid shared message\n", name);
-        goto cleanup;
-    }
+        if (block->kind == MESSAGE_END) {
+            if (kill(parent_pid, SIGUSR2) == -1) {
+                perror("child1: acknowledge end");
+                goto cleanup;
+            }
+            break;
+        }
+        if (block->kind != MESSAGE_DATA || block->length > SHARED_CAPACITY) {
+            fprintf(stderr, "[%s] Invalid shared message\n", name);
+            goto cleanup;
+        }
 
-    if (printf("[%s] PID=%ld, PPID=%ld, bytes=%zu\n",
-               name, (long)getpid(), (long)parent_pid, block->length) < 0) {
-        perror("child1: printf");
-        goto cleanup;
-    }
-    if (fwrite(block->data, 1, block->length, stdout) != block->length) {
-        perror("child1: fwrite");
-        goto cleanup;
-    }
-    if (fputc('\n', stdout) == EOF) {
-        perror("child1: fputc");
-        goto cleanup;
-    }
-    if (fflush(stdout) == EOF) {
-        perror("child1: fflush");
-        goto cleanup;
-    }
-
-    if (kill(parent_pid, SIGUSR2) == -1) {
-        perror("child1: send acknowledgement");
-        goto cleanup;
+        if (text_uppercase(block) == -1) {
+            perror("child1: text_uppercase");
+            goto cleanup;
+        }
+        if (fprintf(stderr, "[%s] PID=%ld, PPID=%ld, processed bytes=%zu\n",
+                    name, (long)getpid(), (long)parent_pid, block->length) < 0 ||
+            fflush(stderr) == EOF) {
+            perror("child1: diagnostic output");
+            goto cleanup;
+        }
+        if (kill(parent_pid, SIGUSR2) == -1) {
+            perror("child1: send acknowledgement");
+            goto cleanup;
+        }
     }
 
     result = EXIT_SUCCESS;
@@ -74,6 +79,5 @@ cleanup:
         perror("child1: close");
         result = EXIT_FAILURE;
     }
-
     return result;
 }

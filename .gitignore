@@ -1,0 +1,9 @@
+/build/
+*.o
+*.log
+*.strace
+
+# Файлы ручной проверки в корне проекта
+/input
+/actual
+/log

@@ -7,15 +7,9 @@ int sync_prepare(void)
 {
     sigset_t signals;
 
-    if (sigemptyset(&signals) == -1) {
-        return -1;
-    }
-
-    if (sigaddset(&signals, SIGUSR1) == -1) {
-        return -1;
-    }
-
-    if (sigaddset(&signals, SIGUSR2) == -1) {
+    if (sigemptyset(&signals) == -1 ||
+        sigaddset(&signals, SIGUSR1) == -1 ||
+        sigaddset(&signals, SIGUSR2) == -1) {
         return -1;
     }
 
@@ -31,29 +25,23 @@ int sync_wait(int signo, pid_t sender, int timeout_seconds)
 
     sigset_t signals;
 
-    if (sigemptyset(&signals) == -1) {
-        return -1;
-    }
-
-    if (sigaddset(&signals, signo) == -1) {
+    if (sigemptyset(&signals) == -1 ||
+        sigaddset(&signals, signo) == -1) {
         return -1;
     }
 
     siginfo_t info;
     int received;
-
     struct timespec timeout = {
         .tv_sec = timeout_seconds,
         .tv_nsec = 0
     };
 
-    do {
-        if (timeout_seconds == 0) {
-            received = sigwaitinfo(&signals, &info);
-        } else {
-            received = sigtimedwait(&signals, &info, &timeout);
-        }
-    } while (received == -1 && errno == EINTR);
+    if (timeout_seconds == 0) {
+        received = sigwaitinfo(&signals, &info);
+    } else {
+        received = sigtimedwait(&signals, &info, &timeout);
+    }
 
     if (received == -1) {
         return -1;

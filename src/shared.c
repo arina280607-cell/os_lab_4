@@ -12,7 +12,6 @@ int shared_map(int fd, struct shared_block **out)
     }
 
     *out = NULL;
-
     struct stat info;
 
     if (fstat(fd, &info) == -1) {
@@ -25,12 +24,8 @@ int shared_map(int fd, struct shared_block **out)
         return -1;
     }
 
-    void *address = mmap(NULL,
-                         sizeof(struct shared_block),
-                         PROT_READ | PROT_WRITE,
-                         MAP_SHARED,
-                         fd,
-                         0);
+    void *address = mmap(NULL, sizeof(struct shared_block),
+                         PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 
     if (address == MAP_FAILED) {
         return -1;
